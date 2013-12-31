@@ -27,14 +27,27 @@ bool Relay::turnOn()
 {
   digitalWrite(pin, HIGH);
   delay(4);
-  getState() == HIGH ? return 0 : return 1 ;
+  getState();
+  if (state == HIGH) {
+    return 0; 
+  } 
+  else {
+    return 1;
+  }
 }
 
 bool Relay::turnOff()
 {
   digitalWrite(pin, LOW);
   delay(4);
-  getState() == LOW ? return 0 : return 1 ;
+  getState();
+  if (state == LOW) {
+    return 0; 
+  } 
+  else {
+    return 1;
+  }
 }
+
 
 
