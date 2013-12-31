@@ -1,5 +1,3 @@
-
-
 /* 
  * ATO_Controller.ino
  * Mike Lussier - Dec 22, 2013
@@ -85,7 +83,7 @@ void setup(void)
   // Configure digital outputs
   pinMode(atoPumpRelay_pin, OUTPUT);
   atoPumpRelay.attach(atoPumpRelay_pin);
-  atoPumpRelay.turnOn();
+  atoPumpRelay.turnOff();
   
   pinMode(statLED_pin, OUTPUT);
   
