@@ -58,7 +58,6 @@ void tick()
     if (nticks > 9) nticks = 0;
 
     flashStatLED();
-    flashRelay();
 
     // Every 1000 ms, update clock
     if (nticks == 0) {
@@ -70,6 +69,7 @@ void tick()
         hourNo = 0;
         sec = 0;
       }
+      flashRelay();
     }
   }
 } // tick
