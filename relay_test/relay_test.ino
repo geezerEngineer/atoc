@@ -45,8 +45,14 @@ void flashStatLED()
 
 void flashRelay()
 {
-  if ((sec % 6) == 0) pumpRelay.turnOn();
-  if ((sec % 10) == 0) pumpRelay.turnOff();
+  if ((sec % 2) == 0) {
+    if (pumpRelay.getState() == LOW) {
+      pumpRelay.turnOn();
+    } 
+    else {
+      pumpRelay.turnOff();
+    }
+  }
 } // flashRelay
 
 void tick()
@@ -119,6 +125,7 @@ void loop()
     if (value == HIGH) pumpRelay.turnOff();
   }
 } // loop
+
 
 
 
