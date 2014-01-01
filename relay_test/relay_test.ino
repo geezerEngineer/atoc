@@ -46,22 +46,38 @@ void setup()
 
 void loop()
 {
+  /*
   // Test 1 - Operate pump relay in accordance with pump switch
-  // Update the pumpSwitch
-  pumpSwitch.update();
-  
-  // Get the updated value
+   // Update the pumpSwitch
+   pumpSwitch.update();
+   
+   // Get the updated value
+   int value = pumpSwitch.read();
+   
+   // Turn on/off pump accordingly
+   if (value == LOW) {
+   pumpRelay.turnOn();
+   } 
+   else {
+   pumpRelay.turnOff();
+   }
+   */
+
+  // Test 2 - Operate pump relay in accordance with changes to pump switch setting
+  boolean stateChanged = pumpSwitch.update();
   int value = pumpSwitch.read();
-  
-  // Turn on/off pump accordingly
-  if (value == LOW) {
-    pumpRelay.turnOn();
-  } else {
-    pumpRelay.turnOff();
+
+  // Turn on/off pump accordingly only if the pumpSwitch has changed state
+  if (stateChanged) {
+    if (value == LOW) pumpRelay.turnOn();
+    if (value == HIGH) pumpRelay.turnOff();
   }
-  
-  // Test 2
-  
+
+
 } // loop
+
+
+
+
 
 
