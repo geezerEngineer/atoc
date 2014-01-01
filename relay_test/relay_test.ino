@@ -19,7 +19,7 @@
  * ON when it goes LOW. 
  */
 
-#include "Relay.h"
+#include <Relay.h>
 #include <Bounce.h> 
 
 static uint8_t pumpSwitch_pin = 9;     // Relay switch, LOW = Relay on
