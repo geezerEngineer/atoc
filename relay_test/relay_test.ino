@@ -11,7 +11,8 @@
  *****************************************
  * Hardware Configuration:
  * Pump switch connected between pin D9 and Gnd. Uses 20kΩ internal pullup.
- * Pump relay SIG connected to pin D10 and relay GND connected to Gnd. 
+ * Pump relay SIG connected to pin D10, relay VCC connected to 5V and 
+ * relay GND connected to Gnd. 
  *
  * Operation: 
  * When the pump switch is idle, the switch reads HIGH. When pressed, the 
