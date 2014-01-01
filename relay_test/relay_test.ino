@@ -23,13 +23,56 @@
 #include <Bounce.h> 
 
 static uint8_t pumpSwitch_pin = 9;     // Relay switch, LOW = Relay on
-static uint8_t pumpRelay_pin = 10;       // Relay for ATO pump
+static uint8_t pumpRelay_pin = 10;     // Relay for ATO pump
+static uint8_t statLED_pin = 13;       // Status LED
 
 // Instantiate debouncer for pump switch
 Bounce pumpSwitch = Bounce();
 
 // Instantiate relay for ATO pump
 Relay pumpRelay = Relay();
+
+// Global time vars
+unsigned long t0 = 0, sec = 0;
+int nticks = 0, d1ticks = 0, d2ticks = 0, hourNo = 0;
+
+// Functions
+void flashStatLED()
+{
+  if (nticks == 0) digitalWrite(statLED_pin, HIGH);
+  if (nticks == 5) digitalWrite(statLED_pin, LOW);
+} // flashStatLED
+
+void flashRelay()
+{
+  if ((sec % 6) == 0) pumpRelay.turnOn();
+  if ((sec % 10) == 0) pumpRelay.turnOff();
+} // flashRelay
+
+void tick()
+// Perform scheduled tasks on 100 ms ticks over 1000 ms cycle (10 ticks)
+{
+  if (millis() - t0 >= 100) { // On 100 ms boundary
+    t0 = millis();
+    ++nticks;  // Increment tick count
+    if (nticks > 9) nticks = 0;
+
+    flashStatLED();
+    flashRelay();
+
+    // Every 1000 ms, update clock
+    if (nticks == 0) {
+      //  - Increment seconds counter, manage hours counter
+      ++sec;
+      if ((sec % 3600) == 0) ++hourNo;
+      if (hourNo == 24) {
+        // Reset time
+        hourNo = 0;
+        sec = 0;
+      }
+    }
+  }
+} // tick
 
 void setup()
 {
@@ -42,10 +85,13 @@ void setup()
   // Configure digital outputs
   pinMode(pumpRelay_pin, OUTPUT);      // set pin to output
   pumpRelay.attach(pumpRelay_pin);     // attach pumpRelay to pin
+  pinMode(statLED_pin, OUTPUT);        // setup statLED
+
 } // setup
 
 void loop()
 {
+  tick();
   /*
   // Test 1 - Operate pump relay in accordance with pump switch
    // Update the pumpSwitch
@@ -72,9 +118,10 @@ void loop()
     if (value == LOW) pumpRelay.turnOn();
     if (value == HIGH) pumpRelay.turnOff();
   }
-
-
 } // loop
+
+
+
 
 
 
