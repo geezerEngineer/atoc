@@ -1,3 +1,7 @@
+/*  * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ Code by Mike Lussier
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
 #ifndef Relay_h
 #define Relay_h
 
@@ -7,15 +11,19 @@ class Relay
 {
 
 public:
-  // Create an instance of relay
-  Relay(); 
+  // Constructor
+  Relay(void);
+   
   // Attach relay to a pin (and also turns off relay)
-  void attach(int pin);  
+  void attach(uint8_t pin);
+    
   // Turn on relay
   bool turnOn();
+  
   // Turn off relay
   bool turnOff();
-    // Return updated relay state
+  
+  // Return updated relay state
   uint8_t getState();
   
 protected:

@@ -9,10 +9,10 @@
 #endif
 #include "Relay.h"
 
-Relay::Relay() {
+Relay::Relay(void) {
 }
 
-void Relay::attach(int pin) {
+void Relay::attach(uint8_t pin) {
   this->pin = pin;
   turnOff();
 }
