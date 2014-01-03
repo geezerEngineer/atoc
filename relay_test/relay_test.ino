@@ -10,79 +10,105 @@
  *
  *****************************************
  * Hardware Configuration:
- * Pump switch connected between pin D9 and Gnd. Uses 20kΩ internal pullup.
- * Pump relay SIG connected to pin D10, relay VCC connected to 5V and 
- * relay GND connected to Gnd. 
+ * Pump switch 
+ *  - connected between pin D9 and Gnd. Uses 20kΩ internal pullup.
+ * Pump relay 
+ *  - SIG connected to pin D10, 
+ *  - VCC connected to 5V and 
+ *  - GND connected to Gnd. 
  *
  * Operation: 
  * When the pump switch is idle, the switch reads HIGH. When pressed, the 
- * switch reads LOW. The relay turns OFF when the switch goes HIGH and turns 
- * ON when it goes LOW. 
+ * switch reads LOW. The relay turns ON when the switch goes LOW and turns 
+ * OFF when either the switch goes HIGH or when the pumpStop callback occurs.
  */
 
 #include <Relay.h>
-#include <Bounce.h> 
+#include <Bounce.h>
+#include <SimpleTimer.h>
 
 static uint8_t pumpSwitch_pin = 9;     // Relay switch, LOW = Relay on
 static uint8_t pumpRelay_pin = 10;     // Relay for ATO pump
 static uint8_t statLED_pin = 13;       // Status LED
 
-// Instantiate debouncer for pump switch
+#define PUMP_MAX_RUN_TIME 5L
+
+// Instantiate debouncer object for pump switch
 Bounce pumpSwitch = Bounce();
 
-// Instantiate relay for ATO pump
+// Instantiate relay object for ATO pump
 Relay pumpRelay = Relay();
+
+// Instantiate timer object for recurring events
+SimpleTimer t = SimpleTimer();
+
+// Define timed events
+uint8_t flashStatLEDEvent;             // Heartbeat LED, 2 Hz
+uint8_t tickEvent;                     // Clock management, 1 Hz
+uint8_t readSwitchesEvent;             // Read mode & pump switches, 5 Hz
+uint8_t relayStopEvent;                // 
 
 // Global time vars
 unsigned long t0 = 0, sec = 0;
 int nticks = 0, d1ticks = 0, d2ticks = 0, hourNo = 0;
 
+// Other globals
+uint8_t atoMode = 1;                  // 0 = AUTO, 1 = MANUAL
+
 // Functions
-void flashStatLED()
+void readSwitches()
+// Read mode and pump switches
 {
-  if (nticks == 0) digitalWrite(statLED_pin, HIGH);
-  if (nticks == 5) digitalWrite(statLED_pin, LOW);
+  // Not reading the mode switch yet
+  // Assume mode switch is in MANUAL
+
+  // Read pump switch
+  boolean stateChanged = pumpSwitch.update();
+  int value = pumpSwitch.read();
+  if ((stateChanged) && (atoMode == 1)) {
+    if (value == LOW) {
+      pumpRelay.turnOn();
+      relayStopEvent = t.setTimeout(1000L * PUMP_MAX_RUN_TIME, stopPump);      
+    }
+    if (value == HIGH) pumpRelay.turnOff(); 
+  } 
+} // readSwitches
+
+
+void flashStatLED()
+// Flash status LED
+{
+  bool LEDstate = digitalRead(statLED_pin);
+  digitalWrite(statLED_pin, !LEDstate);
 } // flashStatLED
 
-void flashRelay()
-{
-  if ((sec % 2) == 0) {
-    if (pumpRelay.getState() == LOW) {
-      pumpRelay.turnOn();
-    } 
-    else {
-      pumpRelay.turnOff();
-    }
-  }
-} // flashRelay
 
 void tick()
-// Perform scheduled tasks on 100 ms ticks over 1000 ms cycle (10 ticks)
+// Perform simple time management every second
 {
-  if (millis() - t0 >= 100) { // On 100 ms boundary
-    t0 = millis();
-    ++nticks;  // Increment tick count
-    if (nticks > 9) nticks = 0;
-
-    flashStatLED();
-
-    // Every 1000 ms, update clock
-    if (nticks == 0) {
-      //  - Increment seconds counter, manage hours counter
-      ++sec;
-      if ((sec % 3600) == 0) ++hourNo;
-      if (hourNo == 24) {
-        // Reset time
-        hourNo = 0;
-        sec = 0;
-      }
-      flashRelay();
-    }
+  // Increment seconds counter, manage hours counter
+  ++sec;
+  if ((sec % 3600) == 0) ++hourNo;
+  if (hourNo == 24) {
+    // Reset time
+    hourNo = 0;
+    sec = 0;
   }
 } // tick
 
+
+void stopPump()
+// Turn off pump relay
+{
+  pumpRelay.turnOff();
+  // Stop the event, so it can be reused
+  t.deleteTimer(relayStopEvent);
+}
+
+
 void setup()
 {
+  Serial.begin(9600);
   // Configure digital inputs
   pinMode(pumpSwitch_pin, INPUT);      // set pin to input
   digitalWrite(pumpSwitch_pin, HIGH);  // turn on pullup resistor
@@ -93,39 +119,35 @@ void setup()
   pinMode(pumpRelay_pin, OUTPUT);      // set pin to output
   pumpRelay.attach(pumpRelay_pin);     // attach pumpRelay to pin
   pinMode(statLED_pin, OUTPUT);        // setup statLED
+  digitalWrite(statLED_pin, HIGH);     // turn on LED
+
+  Serial.println("H/W configuration complete."); 
+
+  // Setup timer events
+  readSwitchesEvent = t.setInterval(200L, readSwitches);
+  flashStatLEDEvent = t.setInterval(500L, flashStatLED);
+  tickEvent = t.setInterval(1000L, tick);
+
+  Serial.println("Timer configuration complete.");
+  Serial.print(t.getNumTimers() + 1);
+  Serial.println(" timed events have been setup.");
 
 } // setup
 
+
 void loop()
 {
-  tick();
-  /*
-  // Test 1 - Operate pump relay in accordance with pump switch
-   // Update the pumpSwitch
-   pumpSwitch.update();
-   
-   // Get the updated value
-   int value = pumpSwitch.read();
-   
-   // Turn on/off pump accordingly
-   if (value == LOW) {
-   pumpRelay.turnOn();
-   } 
-   else {
-   pumpRelay.turnOff();
-   }
-   */
-
-  // Test 2 - Operate pump relay in accordance with changes to pump switch setting
-  boolean stateChanged = pumpSwitch.update();
-  int value = pumpSwitch.read();
-
-  // Turn on/off pump accordingly only if the pumpSwitch has changed state
-  if (stateChanged) {
-    if (value == LOW) pumpRelay.turnOn();
-    if (value == HIGH) pumpRelay.turnOff();
-  }
+  // Update timer
+  t.run();
 } // loop
+
+
+
+
+
+
+
+
 
 
 
