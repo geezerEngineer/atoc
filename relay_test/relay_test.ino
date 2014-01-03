@@ -31,7 +31,7 @@ static uint8_t pumpSwitch_pin = 9;     // Relay switch, LOW = Relay on
 static uint8_t pumpRelay_pin = 10;     // Relay for ATO pump
 static uint8_t statLED_pin = 13;       // Status LED
 
-#define PUMP_MAX_RUN_TIME 5L
+#define PUMP_MAX_RUN_TIME 10L
 
 // Instantiate debouncer object for pump switch
 Bounce pumpSwitch = Bounce();
@@ -49,11 +49,11 @@ uint8_t readSwitchesEvent;             // Read mode & pump switches, 5 Hz
 uint8_t relayStopEvent;                // 
 
 // Global time vars
-unsigned long t0 = 0, sec = 0;
-int nticks = 0, d1ticks = 0, d2ticks = 0, hourNo = 0;
+int secs = 0, mins = 0, hours = 0;
 
 // Other globals
 uint8_t atoMode = 1;                  // 0 = AUTO, 1 = MANUAL
+char tstr[10];
 
 // Functions
 void readSwitches()
@@ -68,9 +68,16 @@ void readSwitches()
   if ((stateChanged) && (atoMode == 1)) {
     if (value == LOW) {
       pumpRelay.turnOn();
-      relayStopEvent = t.setTimeout(1000L * PUMP_MAX_RUN_TIME, stopPump);      
+      relayStopEvent = t.setTimeout(1000L * PUMP_MAX_RUN_TIME, stopPump);
+      Serial.print(tstr);      
+      Serial.println(" - Pump has turned ON manually.");      
     }
-    if (value == HIGH) pumpRelay.turnOff(); 
+    if (value == HIGH) {
+      pumpRelay.turnOff();
+      Serial.print(tstr);
+      Serial.println(" - Pump has turned OFF manually.");      
+    } 
+
   } 
 } // readSwitches
 
@@ -86,14 +93,17 @@ void flashStatLED()
 void tick()
 // Perform simple time management every second
 {
-  // Increment seconds counter, manage hours counter
-  ++sec;
-  if ((sec % 3600) == 0) ++hourNo;
-  if (hourNo == 24) {
-    // Reset time
-    hourNo = 0;
-    sec = 0;
+  // Increment seconds counter, manage minutes & hours counters
+  ++secs;
+  if (secs == 60) {
+    ++mins;
+    secs = 0;
   }
+  if (mins == 60) {
+    ++hours;
+    mins = 0;
+  }  
+  sprintf(tstr, "%02d:%02d", mins, secs);
 } // tick
 
 
@@ -101,6 +111,8 @@ void stopPump()
 // Turn off pump relay
 {
   pumpRelay.turnOff();
+  Serial.print(tstr);
+  Serial.println(" - Pump has turned OFF automatically.");  
   // Stop the event, so it can be reused
   t.deleteTimer(relayStopEvent);
 }
@@ -121,6 +133,11 @@ void setup()
   pinMode(statLED_pin, OUTPUT);        // setup statLED
   digitalWrite(statLED_pin, HIGH);     // turn on LED
 
+  Serial.println("*");
+  Serial.println("*");
+  Serial.println("*");
+  Serial.println("* * * ATO Controller * * *");
+  Serial.println("*");  
   Serial.println("H/W configuration complete."); 
 
   // Setup timer events
@@ -131,6 +148,7 @@ void setup()
   Serial.println("Timer configuration complete.");
   Serial.print(t.getNumTimers() + 1);
   Serial.println(" timed events have been setup.");
+  Serial.println(" ---");
 
 } // setup
 
@@ -140,6 +158,9 @@ void loop()
   // Update timer
   t.run();
 } // loop
+
+
+
 
 
 
