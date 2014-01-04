@@ -29,10 +29,10 @@
  * LOW and turns OFF when either the pump switch or the Level 1 switch goes stable HIGH.
  * The pump will not turn ON if the level 1 switch is HIGH.
  *
- * In AUTOMATIC mode - When the level float drops to within .12” (+/- .04”) of the  
+ * In AUTOMATIC mode - When the level float drops to within .12” (±.04”) of the  
  * bottom clip the internal reed contacts draw together, completing the circuit and causing 
  * the level switch pin to go LOW. A stable LOW value triggers the pump relay to turn ON 
- * and starts a pumpStart callback timer. When the float rises .20” (+/- .04”) from the 
+ * and starts a pumpStart callback timer. When the float rises .20” (±.04”) from the 
  * bottom clip, the contacts separate, opening the circuit and causing the pin to go HIGH. 
  * A stable HIGH value turns the pump relay OFF. The pump relay will also turn OFF when the 
  * pumpStop callback occurs. 
@@ -52,7 +52,7 @@ static uint8_t pumpSwitch_pin   = 9;   // Pump switch
 static uint8_t pumpRelay_pin    = 10;  // Relay for ATO pump
 static uint8_t statLED_pin      = 13;  // Status LED
 
-#define PUMP_RUN_TIME_LIMIT 10L        // Pump run time limit, s
+#define PUMP_RUN_TIME_LIMIT 25L        // Pump run time limit, s
 
 // Instantiate debouncer objects for level 1 switch, mode & pump switches
 Bounce level1Switch = Bounce();
@@ -77,25 +77,38 @@ int secs = 0, mins = 0, hours = 0;
 // Other globals
 const static uint8_t AUTO = 0;
 const static uint8_t MANUAL = 1;
-uint8_t atoMode = MANUAL;              
-char timeS[12];
+uint8_t atoMode = MANUAL;
+const static uint8_t BELOW_LEVEL = 0;
+const static uint8_t AT_LEVEL = 1;
+uint8_t waterLevel = AT_LEVEL;
+char timestamp[12];                       // Logging timestamp
 bool firstTimeThru = true;
 
 
 // Functions
 void readSwitches()
-// Read mode and pump switches
 {
-  bool stateChanged;
-  int value;
-  // Read mode switch
-  if (firstTimeThru) {
-    stateChanged = true;
+ readModeSwitch();
+if ((firstTimeThru) && (atoMode != AUTO)) {
+ // WARNING - system should start in AUTO mode. Issue warning to LCD panel. 
+}
+if (pumpRelay.getState() == HIGH) {
+  readLevelSwitches();
+}
+firstTimeThru = false;
+}
+
+
+void readModeSwitch()
+// Read mode switch
+{
+  if (!firstTimeThru) {
+    bool stateChanged = modeSwitch.update();
   } 
   else {
-    stateChanged = modeSwitch.update();
+    bool stateChanged = true;
   }
-  value = modeSwitch.read();
+  int value = modeSwitch.read();
   if ((stateChanged) && (value == HIGH)) {
     atoMode = AUTO;
     printTimestamp();      
@@ -105,10 +118,15 @@ void readSwitches()
     atoMode = MANUAL;
     printTimestamp();      
     Serial.println("Mode is now MANUAL.");
-  }
-  // Read pump switch
-  stateChanged = pumpSwitch.update();
-  value = pumpSwitch.read();
+  }  
+} // readModeSwitch
+
+
+void readPumpSwitch
+// Read pump switch
+{ 
+  bool stateChanged = pumpSwitch.update();
+  int value = pumpSwitch.read();
   if ((stateChanged) && (atoMode == MANUAL)) {
     if ((value == LOW) && (level1Switch.read() == LOW)) {
       pumpRelay.turnOn();
@@ -120,32 +138,39 @@ void readSwitches()
       printTimestamp();
       Serial.println("Pump is now OFF.");      
     }
-  }
+  }  
+} // readPumpSwitch
 
+
+void readLevelSwitches()
+// Read level switches
+// Level switch read must be delayed by 4 s after pump stops to cancel inflow disturbance.
+{
   // Read level 1 switch
-  if (firstTimeThru) {
-    stateChanged = true;
+  if (!firstTimeThru) {
+    bool stateChanged = level1Switch.update();
   } 
   else {
-    stateChanged = level1Switch.update();
+    bool stateChanged = true;
   }
-  value = level1Switch.read();
+  int value = level1Switch.read();
   if (stateChanged) {
     if (value == HIGH) {
-      pumpRelay.turnOff();
+      waterLevel = AT_LEVEL;
+      // if pump is not already off, turn it off
+      if (pumpRelay.getStatus() == HIGH) pumpRelay.turnOff();
       printTimestamp();
-      Serial.println("Water level is OK. Pump is now OFF.");
+      Serial.println("Water level is AT_LEVEL. Pump is now OFF.");
     }
     if ((value == LOW) && (atoMode == AUTO)) {
       pumpRelay.turnOn();
-      // Create callback timer to stop pump
-      relayStopEvent = t.setTimeout(1000L * PUMP_RUN_TIME_LIMIT, stopPump);
+      // Create callback timer to stop pump after 1/5 time limit pulse
+      relayStopEvent = t.setTimeout(200L * PUMP_RUN_TIME_LIMIT, stopPump);
       printTimestamp();
       Serial.println("Water level is LOW. Pump is now ON.");      
     }
-    firstTimeThru = false;
   } 
-} // readSwitches
+} // readLevelSwitches
 
 
 void flashStatLED()
@@ -188,8 +213,8 @@ void stopPump()
 void printTimestamp()
 //
 {
-  sprintf(timeS, "%02d:%02d - ", mins, secs);
-  Serial.print(timeS);
+  sprintf(timestamp, "%02d:%02d - ", mins, secs);
+  Serial.print(timestamp);
 } // printTimestamp
 
 
