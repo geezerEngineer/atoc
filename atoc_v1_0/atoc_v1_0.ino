@@ -1,9 +1,9 @@
 /* 
  * ATO_Controller.ino
- * Mike Lussier - Jan 3, 2014
+ * Mike Lussier - Jan 4, 2014
  * Compiled with Arduino 1.0.5
  * 
- * This is version 1.0
+ * This is version 1.1
  * Status: TBD.
  *****************************************
  * v1.0 - Integrates one (of two) level switches, pump relay, 
@@ -44,15 +44,17 @@
 #include <LiquidCrystal.h>
 
 #define INO_NAME "ATOC"
-#define INO_VERSION "1.0.d"
+#define INO_VERSION "1.1.a"
 
-static uint8_t level1Switch_pin = 7;   // Level 1 switch
+static uint8_t level1Switch_pin = 6;   // Level 1 switch
 static uint8_t modeSwitch_pin   = 8;   // Mode switch
 static uint8_t pumpSwitch_pin   = 9;   // Pump switch
 static uint8_t pumpRelay_pin    = 10;  // Relay for ATO pump
 static uint8_t statLED_pin      = 13;  // Status LED
 
 #define PUMP_RUN_TIME_LIMIT 25L        // Pump run time limit, s
+#define LEVEL_SWITCH_READ_DELAY 10L    // Time delay to read level switch, s
+#define HIGH_WATER_LEVEL_THRESHOLD 8
 
 // Instantiate debouncer objects for level 1 switch, mode & pump switches
 Bounce level1Switch = Bounce();
@@ -68,8 +70,10 @@ SimpleTimer t = SimpleTimer();
 // Define timed events
 uint8_t flashStatLEDEvent;             // Heartbeat LED, 2 Hz
 uint8_t tickEvent;                     // Clock management, 1 Hz
-uint8_t readSwitchesEvent;             // Read mode & pump switches, 5 Hz
+uint8_t readModeSwitchEvent;           // Read mode switch, 5 Hz
+uint8_t readLevel1SwitchEvent;         // Read level 1 switch, 10 Hz
 uint8_t relayStopEvent;                // 
+uint8_t rDelayEvent;                   // Level switch read delay reset 
 
 // Global time vars
 int secs = 0, mins = 0, hours = 0;
@@ -78,35 +82,104 @@ int secs = 0, mins = 0, hours = 0;
 const static uint8_t AUTO = 0;
 const static uint8_t MANUAL = 1;
 uint8_t atoMode = MANUAL;
+
 const static uint8_t BELOW_LEVEL = 0;
 const static uint8_t AT_LEVEL = 1;
 uint8_t waterLevel = AT_LEVEL;
-char timestamp[12];                       // Logging timestamp
+
+const static uint8_t OFF = 0;
+const static uint8_t ON = 1;
+uint8_t pumpSwitchState = OFF;
+
+char timestamp[12];                    // Logging timestamp
 bool firstTimeThru = true;
+bool levSwReadDelay = false;           // Level switch read delay due to water disturbance
+int nCycles = 0;                       //
+bool no_errors = true, w = true;
 
 
 // Functions
-void readSwitches()
+void autoProcess()
+// called conditionally every 200 ms by readModeSwitch  
 {
- readModeSwitch();
-if ((firstTimeThru) && (atoMode != AUTO)) {
- // WARNING - system should start in AUTO mode. Issue warning to LCD panel. 
-}
-if (pumpRelay.getState() == HIGH) {
-  readLevelSwitches();
-}
-firstTimeThru = false;
-}
+  // Is pump running?
+  if (pumpRelay.getState() == LOW) { // no
+    // Is the level switch read delay in effect?
+    if (!levSwReadDelay) { // no
+      if (waterLevel == BELOW_LEVEL) { // level is LOW
+        ++nCycles;
+        if (nCycles < HIGH_WATER_LEVEL_THRESHOLD) {
+          // turn on pump, then turn it off after 1/5 pump_run_time_limit
+          pumpRelay.turnOn();
+          printTimestamp();      
+          Serial.println("Pump is now ON.");        
+          relayStopEvent = t.setTimeout(200L * PUMP_RUN_TIME_LIMIT, stopPump);
+          // make levSwReadDelay true to prevent level switch from being read
+          levSwReadDelay = true;
+        } 
+        else {
+          errorProcess();
+        } 
+      }
+    }
+  }
+} // autoProcess
+
+
+void manualProcess()
+// called conditionally every 200 ms by readModeSwitch
+{
+  // Read pump switch
+  readPumpSwitch();  
+  if (pumpSwitchState == ON) {
+    if (pumpRelay.getState() == LOW) {
+      if (waterLevel == BELOW_LEVEL) {
+        pumpRelay.turnOn();
+        printTimestamp();
+        Serial.println("Water is BELOW_LEVEL.");      
+        Serial.println("      - Pump is now ON.");
+      } 
+      else {
+        if(w) {
+          printTimestamp();
+          Serial.println("Water is AT_LEVEL.");      
+          Serial.println("      - Pump is prohibited from starting.");
+          w = false;
+        }
+      }
+    }  
+  }
+  if (pumpSwitchState == OFF) {
+    if (pumpRelay.getState() == HIGH) {
+      pumpRelay.turnOff();
+      printTimestamp();
+      Serial.println("Pump is now OFF.");
+      w = true;
+    }  
+  }
+} // manualProcess
+
+void errorProcess()
+{
+  printTimestamp();      
+  Serial.println("ERROR - The ATO water supply has been depleted, or");
+  Serial.println("level switch 1 may be malfunctioning.");
+  Serial.println();
+  Serial.println("The ATOC will now shut itself off to avoid overflowing the aquarium.");
+  Serial.println("Hopefully, no marine life will die today. Please send help soon!");
+  no_errors = false;
+}  
 
 
 void readModeSwitch()
-// Read mode switch
+// Read mode switch, called every 200 ms by timer
 {
+  bool stateChanged;
   if (!firstTimeThru) {
-    bool stateChanged = modeSwitch.update();
+    stateChanged = modeSwitch.update();
   } 
   else {
-    bool stateChanged = true;
+    stateChanged = true;
   }
   int value = modeSwitch.read();
   if ((stateChanged) && (value == HIGH)) {
@@ -118,59 +191,48 @@ void readModeSwitch()
     atoMode = MANUAL;
     printTimestamp();      
     Serial.println("Mode is now MANUAL.");
-  }  
+  }
+  if ((firstTimeThru) && (atoMode != AUTO)) {
+    // WARNING - system should start in AUTO mode. Issue warning to LCD panel. 
+  }
+  if (atoMode == AUTO) autoProcess();
+  if (atoMode == MANUAL) manualProcess();
+  firstTimeThru = false;  
 } // readModeSwitch
 
 
-void readPumpSwitch
+void readPumpSwitch()
 // Read pump switch
 { 
   bool stateChanged = pumpSwitch.update();
   int value = pumpSwitch.read();
-  if ((stateChanged) && (atoMode == MANUAL)) {
-    if ((value == LOW) && (level1Switch.read() == LOW)) {
-      pumpRelay.turnOn();
-      printTimestamp();      
-      Serial.println("Pump is now ON.");      
-    }
-    if (value == HIGH) {
-      pumpRelay.turnOff();
-      printTimestamp();
-      Serial.println("Pump is now OFF.");      
-    }
+  if (stateChanged) {
+    if (value == LOW) pumpSwitchState = ON;
+    if (value == HIGH) pumpSwitchState = OFF;      
   }  
 } // readPumpSwitch
 
 
-void readLevelSwitches()
-// Read level switches
-// Level switch read must be delayed by 4 s after pump stops to cancel inflow disturbance.
+void readLevel1Switch()
+// Read level 1 switch
 {
-  // Read level 1 switch
+  bool stateChanged;
   if (!firstTimeThru) {
-    bool stateChanged = level1Switch.update();
+    stateChanged = level1Switch.update();    
   } 
   else {
-    bool stateChanged = true;
+    stateChanged = true;
   }
   int value = level1Switch.read();
-  if (stateChanged) {
-    if (value == HIGH) {
-      waterLevel = AT_LEVEL;
-      // if pump is not already off, turn it off
-      if (pumpRelay.getStatus() == HIGH) pumpRelay.turnOff();
-      printTimestamp();
-      Serial.println("Water level is AT_LEVEL. Pump is now OFF.");
-    }
-    if ((value == LOW) && (atoMode == AUTO)) {
-      pumpRelay.turnOn();
-      // Create callback timer to stop pump after 1/5 time limit pulse
-      relayStopEvent = t.setTimeout(200L * PUMP_RUN_TIME_LIMIT, stopPump);
-      printTimestamp();
-      Serial.println("Water level is LOW. Pump is now ON.");      
-    }
+  //if ((value == HIGH) && (stateChanged)) {
+  if (value == HIGH) {  
+    waterLevel = AT_LEVEL;
+    nCycles = 0;
+  }
+  if (value == LOW) {  
+    waterLevel = BELOW_LEVEL;    
   } 
-} // readLevelSwitches
+} // readLevel1Switch
 
 
 void flashStatLED()
@@ -202,12 +264,22 @@ void stopPump()
 {
   if (pumpRelay.getState() == HIGH) {
     pumpRelay.turnOff();
-    printTimestamp();
-    Serial.println("Pump run time limit reached. Pump is now OFF.");
+    printTimestamp();      
+    Serial.println("Pump is now OFF.");
   } 
-  // Stop the event, so it can be reused
+  // Create timer event to reset level switch read delay after 4 s
+  rDelayEvent = t.setTimeout(1000L * LEVEL_SWITCH_READ_DELAY, resetReadDelay);
+  // Stop the relayStopEvent, so it can be reused
   t.deleteTimer(relayStopEvent);
 }
+
+void resetReadDelay()
+// Reset level switch read delay to allow level switch to be read
+{
+  levSwReadDelay = false;
+  // Stop the event, so it can be reused
+  t.deleteTimer(rDelayEvent);
+} // resetReadDelay
 
 
 void printTimestamp()
@@ -226,7 +298,7 @@ void setup()
   digitalWrite(level1Switch_pin, HIGH);    // turn on pullup resistor
   level1Switch.attach(level1Switch_pin);   // attach level1Switch to pin
   // ******** Proper interval will need to be determined for level switch  
-  level1Switch.interval(10);
+  level1Switch.interval(5);
   // ***************************
 
   pinMode(modeSwitch_pin, INPUT);          // set pin to input
@@ -253,7 +325,8 @@ void setup()
   Serial.println("H/W configuration complete."); 
 
   // Setup timer events
-  readSwitchesEvent = t.setInterval(200L, readSwitches);
+  readLevel1SwitchEvent = t.setInterval(200L, readLevel1Switch);
+  readModeSwitchEvent = t.setInterval(400L, readModeSwitch);
   flashStatLEDEvent = t.setInterval(500L, flashStatLED);
   tickEvent = t.setInterval(1000L, tick);
 
@@ -267,9 +340,25 @@ void setup()
 
 void loop()
 {
-  // Update timer
-  t.run();
+  while (no_errors) {
+    // Update timer
+    t.run();
+  }
 } // loop
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
