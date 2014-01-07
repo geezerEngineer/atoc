@@ -46,10 +46,10 @@
 #include <LiquidCrystal.h>
 
 #define INO_NAME "ATOC"
-#define INO_VERSION "1.1.c"
+#define INO_VERSION "1.1.d"
 
 static uint8_t alarmSpeaker_pin = 2;   // Alarm speaker
-static uint8_t level1Switch_pin = 6;   // Level 1 switch
+static uint8_t level1Switch_pin = 7;   // Level 1 switch
 static uint8_t modeSwitch_pin   = 8;   // Mode switch
 static uint8_t pumpSwitch_pin   = 9;   // Pump switch
 static uint8_t pumpRelay_pin    = 10;  // Relay for ATO pump
@@ -88,7 +88,7 @@ int secs = 0, mins = 0, hours = 0;
 // Other globals
 const static uint8_t AUTO = 0;
 const static uint8_t MANUAL = 1;
-const static uint8_t FAILURE = -1;
+const static uint8_t FAULT = -1;
 uint8_t atoMode = AUTO;                // Default mode is AUTO
 
 const static uint8_t BELOW_LEVEL = 0;
@@ -98,13 +98,16 @@ uint8_t waterLevel = AT_LEVEL;
 const static uint8_t OFF = 0;
 const static uint8_t ON = 1;
 uint8_t pumpSwitchState = OFF;
+long pumpTimeOn, pumpTimeOff;
 
 char timestamp[12];                     // Logging timestamp
 bool firstTimeThru = true;
 bool levelSwitchReadInhibit = false;    // Inhibits reading switch due to water disturbance
+bool manualModeInhibit = false;
 int curPumpCycle = 0;                   // Current pump cycle (max 8), n
 int freshWaterVol = RESERVOIR_FULL_VOL; // Initial fresh water volume, mL
- 
+int dossantVol = 0;
+
 // pumpCycleTime = 1/5 time to refill to nominal level at refill rate, ms
 const int pumpCycleTime = (int) (HYSTERESIS_VOL_CHANGE / REFILL_RATE * 1000.0 / 5.0);
 // pumpCycleVol = vol dispensed during 1 pump cycle, mL
@@ -134,9 +137,10 @@ void autoProcess()
           relayStopEvent = t.setTimeout(pumpCycleTime, stopPump);
           // make levelSwitchReadInhibit true to prevent level switch from being read
           levelSwitchReadInhibit = true;
+          manualModeInhibit = true;
         } 
         else {
-          errorProcess();
+          faultProcess();
         } 
       }
     }
@@ -147,12 +151,14 @@ void autoProcess()
 void manualProcess()
 // called conditionally every 200 ms by readModeSwitch
 {
+  curPumpCycle = 0;
   // Read pump switch
   readPumpSwitch();  
   if (pumpSwitchState == ON) {
     if (pumpRelay.getState() == LOW) {
       if (waterLevel == BELOW_LEVEL) {
         pumpRelay.turnOn();
+        pumpTimeOn = millis();
         printTimestamp();
         Serial.println("Water is BELOW_LEVEL.");      
         Serial.println("      - Pump is now ON.");
@@ -170,26 +176,36 @@ void manualProcess()
   if (pumpSwitchState == OFF) {
     if (pumpRelay.getState() == HIGH) {
       pumpRelay.turnOff();
+      pumpTimeOff = millis();
       printTimestamp();
-      Serial.println("Pump is now OFF.");
+      Serial.print("Pump is now OFF. ");
+      dossantVol += (int) ((float) (pumpTimeOff - pumpTimeOn) * REFILL_RATE / 1000.0);
+      Serial.print(dossantVol);
+      Serial.println(" mL dossant has been dispensed.");
       w = true;
     }  
   }
 } // manualProcess
 
-void errorProcess()
+void faultProcess()
 {
-  printTimestamp();      
+  printTimestamp();
+  Serial.println("*");  
   Serial.println("WARNING");
   Serial.println();
-  Serial.println("The ATO fresh water supply has been depleted, or level switch 1 may ");
-  Serial.println("be malfunctioning.");
+  if (freshWaterVol < pumpCycleVol) {
+    Serial.println("The ATO fresh water supply has been depleted and needs to be replenished.");
+  } 
+  else {
+    Serial.println("Level switch 1 (ATO float switch) may be malfunctioning. Please inspect ");
+    Serial.println("the switch and rectify the problem, if possible.");  
+  };
   Serial.println();
-  Serial.println("The ATOC will now shut itself off to avoid overflowing the aquarium.");
+  Serial.println("The ATOC will now shut itself off to avoid damaging the aquarium.");
   Serial.println("Hopefully, no marine life will die today. Please send help soon!");
-   Serial.println(); 
-  Serial.println("**  Press reset switch to silence alarm and restart controller.  **");
-  atoMode = FAILURE;
+  Serial.println(); 
+  Serial.println("** Press MANUAL mode to silence the alarm and restart the controller. **");
+  atoMode = FAULT;
 }  
 
 
@@ -213,12 +229,13 @@ void readModeSwitch()
     atoMode = MANUAL;
     printTimestamp();      
     Serial.println("Mode is now MANUAL.");
+    dossantVol = 0;
   }
   if ((firstTimeThru) && (atoMode != AUTO)) {
     // WARNING - system should start in AUTO mode. Issue warning to LCD panel. 
   }
   if (atoMode == AUTO) autoProcess();
-  if (atoMode == MANUAL) manualProcess();
+  if ((atoMode == MANUAL) && (!manualModeInhibit)) manualProcess();
   firstTimeThru = false;  
 } // readModeSwitch
 
@@ -291,10 +308,11 @@ void stopPump()
     Serial.print(freshWaterVol);
     Serial.println(" mL supply water remains.");
   } 
-  // Create timer event to reset level switch read delay
+  // Create timer event to reset level switch read inhibit
   inhibitEvent = t.setTimeout(1000L * LEVEL_SWITCH_READ_INHIBIT, resetReadInhibit);
   // Stop the relayStopEvent, so it can be reused
   t.deleteTimer(relayStopEvent);
+  manualModeInhibit = false;
 }
 
 void resetReadInhibit()
@@ -354,7 +372,7 @@ void setup()
   Serial.print(" - Pump cycle vol, mL    : ");
   Serial.println(pumpCycleVol); 
   Serial.println();
-  
+
   // Setup timer events
   readLevel1SwitchEvent = t.setInterval(200L, readLevel1Switch);
   readModeSwitchEvent = t.setInterval(400L, readModeSwitch);
@@ -372,7 +390,7 @@ void setup()
 
 void loop()
 {
-  while (atoMode >= 0) {
+  while (atoMode > -1) {
     // Update timer
     t.run();
   }
@@ -380,8 +398,16 @@ void loop()
     // Sound alarm (annoying, isn't it!)
     tone(alarmSpeaker_pin, 440, 300);
     tone(alarmSpeaker_pin, 523, 300);
+    // Recover from fault
+    int value = modeSwitch.read();
+    if (value == LOW) {
+      atoMode = MANUAL;
+      if (freshWaterVol < pumpCycleVol) freshWaterVol = RESERVOIR_FULL_VOL;
+      break;
+    }
   }
 } // loop
+
 
 
 
