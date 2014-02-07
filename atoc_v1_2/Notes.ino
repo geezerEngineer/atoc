@@ -1,3 +1,4 @@
+/*
 atoc_v1_2 Hardware Configuration:
  Alarm piezo buzzer
   - connected between pin D6 and Gnd.
@@ -34,3 +35,4 @@ and starts a pumpStart callback timer. When the float rises .20” (±.04”) fr
 bottom clip, the contacts separate, opening the circuit and causing the pin to go HIGH. 
 A stable HIGH value turns the pump relay OFF. The pump relay will also turn OFF when the 
 pumpStop callback occurs.
+*/

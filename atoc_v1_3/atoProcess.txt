@@ -1,0 +1,104 @@
+void atoProcess(void)
+{
+  if (levelSwitch.isBlocked) {
+    return;
+  } 
+  else {
+    bool changed = levelSwitch.update();
+    int value = levelSwitch.read();
+    if (value == LOW) waterLevel = BELOW_LEVEL;
+    if (value == HIGH) waterLevel = AT_LEVEL;
+
+    if (waterLevel == BELOW_LEVEL) { // yes
+      // If first time since waterLevel change then
+      // delay 2 seconds before proceeding
+      if (changed) {
+        atoBlocked = true;
+        unblockAtoEvent = t.after(2000L, unblockAto, 0);
+#if DEBUG == 0
+        s2 = " Water: LOW";
+        wd(&s2, 2);
+#else
+        Serial.println("Water level is LOW.");
+#endif  
+      }
+      // Is pump running?
+      if (atoPumpRelay.getState() == HIGH) { // yes
+#if DEBUG == 1      
+        Serial.println("Pump is running.");
+#endif        
+        return;
+      } 
+      else { // no, pump is not running
+#if DEBUG == 1
+        Serial.println("Pump is stopped.");
+#endif
+        if (!atoBlocked) { // this part of ato is blocked for a few seconds
+          ++curPumpCycle;
+          // Is there a fault?
+          if ((curPumpCycle > MAX_PUMP_RUN_CYCLES) || (freshWaterVol < pumpCycleVol)) { // yes
+#if DEBUG == 1
+            Serial.println("Fault, so will not start pump.");
+#endif          
+            mode = FAULT;
+            return;
+          } 
+          else { // no, there is no fault
+#if DEBUG == 1        
+            Serial.println("No fault, so starting pump.");
+#endif
+            atoPumpRelay.turnOn();
+#if DEBUG == 0
+            s2 = "ATO Pump: ON";
+            wd(&s2, 2);
+#else
+            Serial.print("Pump is on. Cycle = ");
+            Serial.print(curPumpCycle);
+            Serial.print("  Remaining vol = ");
+            Serial.print(freshWaterVol);
+            Serial.println(" mL");
+#endif          
+            levelSwitch.isBlocked = true;
+#if DEBUG == 1
+            Serial.println("Blocking level switch.");
+#endif
+            stopPumpEvent = t.after(pumpCycleTime, stopPump, 0);
+            freshWaterVol -= pumpCycleVol;
+          }
+          return;
+        }
+      }
+    } 
+    else { // no, waterLevel is not LOW
+#if DEBUG == 0
+      if (changed) {
+        s2 = " Water: OK";
+        wd(&s2, 2);
+        clrMessageEvent=t.after(4000L, clrMessage, (void*)2);    
+#else
+        Serial.println("Water level is OK.");
+#endif
+      }
+      curPumpCycle = 0;
+      // Is pump stopped?
+      if (atoPumpRelay.getState() == LOW) { // yes
+#if DEBUG == 1
+        Serial.println("Pump is stopped.");
+#endif
+        return;
+      } 
+      else { // no, pump is not stopped
+#if DEBUG == 1
+        Serial.print("Pump is running...");
+#endif
+        atoPumpRelay.turnOff();
+#if DEBUG == 1
+        Serial.println("Immediately stopping pump.");
+#endif
+        t.stop(stopPumpEvent);
+        unblockSwitchEvent = t.after(INFLOW_DISSIPATION_TIME * 1000L, unblockLevelSwitch, 0);
+        return;
+      }
+    }
+  }
+} // atoProcess

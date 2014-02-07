@@ -1,11 +1,11 @@
 /* 
- * atoc_v1_2.ino
- * Mike Lussier - Jan 22, 2014
+ * atoc_coretest.ino
+ * Mike Lussier - Jan 25, 2014
  * Compiled with Arduino 1.0.5
  *****************************
  */
 #define INO_NAME "ATOC"
-#define INO_VERSION "1.2.g"
+#define INO_VERSION "1.2.x"
 
 /* 
  * .c - Adds RTC; nighttime sump lighting function and completes code for 
@@ -23,7 +23,7 @@
 #include "DS1307.h"
 
 static uint8_t alarm_pin            = 14;    // Piezo alarm (A0)
-static uint8_t level1Switch_pin     = 4;     // Level 1 switch
+static uint8_t level1Switch_pin     = 8;     // Level 1 switch (4 is not working)
 static uint8_t modeSwitch_pin       = 2;     // Mode switch
 static uint8_t pumpSwitch_pin       = 3;     // Pump switch
 static uint8_t atoPumpRelay_pin     = 5;     // Relay for ATO pump
@@ -63,7 +63,9 @@ uint8_t pumpStopEvent;                 // Turn off ato pump relay
 uint8_t inhibitEvent;                  // Level 1 switch read inhibit reset
 uint8_t enableDisplayEvent;            // Enable LCD display updating, after 3 s
 uint8_t enableAtoEvent;
+uint8_t enableMainProcessEvent;
 uint8_t alarmEvent;                    // Sound alarm to indicate fault
+uint8_t simulateFaultEvent;
 
 
 // Define DS1307 RTC clock object
@@ -114,7 +116,8 @@ const int pumpCycleVol = (int) (ATO_PUMP_RATE * (float) pumpCycleTime / 1000.0);
 
 // LCD display variables
 bool displayEnabled = false;            // Allows process messages to be written to LCD
-bool waitingForSplashScreen = true;
+bool inhibitMainProcess = true;
+bool du1, du2, du3, du4, du5;           // Refresh display for specific messages
 
 // From GDM1602K LCD character set
 const char ptr = 126;                   // Pointer symbol
@@ -189,7 +192,14 @@ void updateDisplay(int msgNo)
       clrLine(2);    
       goToPosn(16);
       Serial.print("Bad level switch");
-      break;     
+      break;
+
+    case 8 :
+      clrLine(1);
+      clrLine(2);    
+      goToPosn(1);
+      Serial.print("Fault cleared");
+      break;      
     }
   }
 } // updateDisplay
@@ -198,7 +208,6 @@ void updateDisplay(int msgNo)
 void enableDisplay(void* context)
 {
   displayEnabled = true;
-  waitingForSplashScreen = false;
   clearLCD();
   updateDisplay(1);
 } // enableDisplay
@@ -233,12 +242,19 @@ void flashStatLED(void* context)
 void mainProcess(void* context)
 // Called every 250 ms by recurring timed event, mainProcessEvent 
 {
-
   // Poll sensors and update logical device states
   readAllSwitches();
 
-  if (processMode != FAULT) {
-    if (!waitingForSplashScreen) {
+  if ((processMode == FAULT) && (atoPumpMode == ON)) {
+    // Recover from FAULT
+    processMode = ATO;
+    displayEnabled = true;
+    updateDisplay(8); // "Ready"
+    enableMainProcessEvent= t.after(3500L, enableMainProcess, 0);
+  }
+
+  if (!inhibitMainProcess) {
+    if (processMode != FAULT) {
       // Always perform ATO function
       atoProcess();
 
@@ -249,10 +265,10 @@ void mainProcess(void* context)
       if (processMode == DOSING) {
         dosingProcess();
       }
+    } 
+    else {
+      faultProcess();
     }
-  } 
-  else {
-    faultProcess();
   }
 } // mainProcess
 
@@ -266,34 +282,27 @@ void readAllSwitches(void)
     ms_state = modeSwitch.read();
     if (ms_state == HIGH) {
       processMode = ATO;
-      psBlocked = true;
     }
     if (ms_state == LOW) {
       processMode = DOSING;
-      psBlocked = false;
     }
     ftt_ms = false;
-    enableDisplay(0);
-    //updateDisplay(1);
+    du1 = true;
   }
 
   // Read pump switch
-  if (!psBlocked) {
-    ps_stateChanged = pumpSwitch.update();
-    if ((ftt_ps) || (ps_stateChanged)) {
-      ps_state = pumpSwitch.read();
-      if (ps_state == HIGH) {
-        if (processMode == DOSING) dosPumpMode = OFF;
-        if (processMode == ATO) atoPumpMode = OFF;
-      }
-      if (ps_state == LOW) {
-        if (processMode == DOSING) dosPumpMode = ON;
-        if (processMode == ATO) atoPumpMode = ON;
-      }
-      ftt_ps = false;
-      if (processMode == ATO) updateDisplay(2);
-      if (processMode == DOSING) updateDisplay(4);
+  ps_stateChanged = pumpSwitch.update();
+  if ((ftt_ps) || (ps_stateChanged)) {
+    ps_state = pumpSwitch.read();
+    if (ps_state == HIGH) {
+      if (processMode == DOSING) dosPumpMode = OFF;
+      if (processMode != DOSING) atoPumpMode = OFF;
     }
+    if (ps_state == LOW) {
+      if (processMode == DOSING) dosPumpMode = ON;
+      if (processMode != DOSING) atoPumpMode = ON;
+    }
+    ftt_ps = false;
   }
 
   // Read level 1 switch
@@ -303,19 +312,12 @@ void readAllSwitches(void)
       l1s_state = level1Switch.read();
       if (l1s_state == HIGH) {
         waterLevel = AT_LEVEL;
-        // Reset pump cycles
-        curPumpCycle = 0;
-        enableDisplayEvent = t.after(5000L, enableDisplay, 0);
-        updateDisplay(3);
       }
       if (l1s_state == LOW) {
         waterLevel = BELOW_LEVEL;
-        atoBlocked = true;
-        enableAtoEvent = t.after(5000L, resetAtoBlocked, 0);
-        enableDisplayEvent = t.after(4000L, enableDisplay, 0);
-        updateDisplay(3);
       }
       ftt_l1s = false;
+      du3 = true;
     } 
   }        
 } // readAllSwitches
@@ -325,13 +327,17 @@ void atoProcess()
 // Called conditionally every 250 ms by mainProcess.  
 {
   // Is ato blocked?
-  if (!atoBlocked) { // no
+  if (!atoBlocked) { // no  
+    if (du1) {
+      updateDisplay(1);
+      du1 = false;
+    }
     // Is the ato pump running?
     if (atoPumpRelay.getState() == HIGH) { // yes
       // Do nothing - pump will be turned off by pumpStopEvent
     } 
     else { // no
-      // Is level 1 switch read blocked?
+      // Is level 1 switch blocked?
       if (!l1sBlocked) { // no
 
         if (waterLevel == BELOW_LEVEL) { // level is LOW
@@ -346,17 +352,22 @@ void atoProcess()
             // Set up timed event to turn off pump
             pumpStopEvent = t.after(pumpCycleTime, stopPump, 0);
             updateDisplay(2); // "ATO Pump : ON"
+            atoBlocked = true;
           } 
           else {
             processMode = FAULT;
           } 
-        } 
-        else {
-          //updateDisplay(3); // "Water: OK"
         }
-      }
+        else {
+          if (du3) {
+            du3 = false;
+            updateDisplay(3); // "Water: OK"
+            enableDisplayEvent = t.after(3000L, enableDisplay, 0);
+          } // du3
+        }
+      } // l1sBlocked
     }
-  }
+  } // !atoBlocked
 } // atoProcess
 
 
@@ -365,28 +376,6 @@ void sumpLightProcess(void)
 // Controls the sump light; for now, light goes on at SUMPLIGHT_TURNON_HOUR, 
 // then off at SUMPLIGHT_TURNOFF_HOUR 
 {
-  if (processMode != FAULT) {
-    // Read current time from RTC
-    clock.getTime();
-    if (clock.hour == SUMPLIGHT_TURNON_HOUR) {
-      if (sumpLightRelay.getState() == LOW) {
-        sumpLightRelay.turnOn();
-        sumpLightMode = ON;
-        updateDisplay(5);
-      }
-    }
-    if (clock.hour == SUMPLIGHT_TURNOFF_HOUR) {
-      if (sumpLightRelay.getState() == HIGH) {
-        sumpLightRelay.turnOff();
-        sumpLightMode = OFF;
-        updateDisplay(5);
-      }
-    }
-  } 
-  else { 
-    // Turn off sump light if there's a fault
-    if (sumpLightRelay.getState() == HIGH) sumpLightRelay.turnOff();
-  }
 
 } // sumpLightProcess
 
@@ -396,28 +385,7 @@ void dosingProcess(void)
 // Details of this process will change. For now, the dosing pump will be operated manually
 // using the pump switch, when the mode switch is in DOSING mode (inhibited in ATO mode).
 {
-  if (processMode == DOSING) {
-    if (dosPumpMode == ON) {
-      // Is dosing pump off?
-      if (dosPumpRelay.getState() == LOW) {
-        // Turn on pump
-        dosPumpRelay.turnOn();
-        // Update the lcd
-        updateDisplay(4); // "DOS Pump: ON"
-        enableDisplayEvent = t.after(4000L, enableDisplay, 0);
-      }
-    }
-    if (dosPumpMode == OFF) {
-      // Is dosing pump on?
-      if (dosPumpRelay.getState() == HIGH) {
-        // Turn off pump
-        dosPumpRelay.turnOff();
-        // Update the lcd
-        updateDisplay(4); // "DOS Pump: OFF"
-        enableDisplayEvent = t.after(4000L, enableDisplay, 0);
-      }
-    } 
-  }
+
 } // dosingProcess
 
 
@@ -426,25 +394,26 @@ void faultProcess()
 // and take corrective action, if possible.
 // Faults include 1) depleted fresh water supply, 2) malfunctioning level switch.
 {
-    inhibitMainProcess = true;
-    atoPumpRelay.turnOff();
-    displayEnabled = true;
-    updateDisplay(1); // " ** FAULT **"
-    if (freshWaterVol < pumpCycleVol) {
-      updateDisplay(6); // "Replenish water"
-      // Reset water vol
-      freshWaterVol = RESERVOIR_VOL;
-    } 
-    else {
-      updateDisplay(7); // "Bad level switch"
-      curPumpCycle = 0;  
-    }
+  // faultProcess is not reentrant
+  inhibitMainProcess = true;
+  atoPumpRelay.turnOff();
+  displayEnabled = true;
+  updateDisplay(1); // " ** FAULT **"
+  if (freshWaterVol < pumpCycleVol) {
+    updateDisplay(6); // "Replenish water"
+    // Reset water vol
+    freshWaterVol = RESERVOIR_VOL;
+  } 
+  else {
+    updateDisplay(7); // "Bad level switch"
+    curPumpCycle = 0;  
+  }
 
-    clock.getTime();
-    // Sound alarm for 3 s if time is between 06h and 23h
-    //if (6 < clock.hour < 23) { 
-    alarmEvent = t.oscillate(alarm_pin, 300, LOW, 1);
-    //}
+  clock.getTime();
+  // Sound alarm for 3 s if time is between 06h and 23h
+  //if (6 < clock.hour < 23) { 
+  alarmEvent = t.oscillate(alarm_pin, 300, LOW, 1);
+  //}
 } // faultProcess
 
 
@@ -459,22 +428,34 @@ void stopPump(void* context)
   l1sBlocked = true;
   // Create timer event to unblock level 1 switch read
   inhibitEvent = t.after(1000L * LEVEL1_SWITCH_READ_INHIBIT, resetl1sBlocked, 0);
-
 }
 
 
 void resetl1sBlocked(void* context)
-// Allow level 1 switch to be read
+// Allow level 1 switch to be read and immediately read it
 {
   l1sBlocked = false;
+  //l1s_stateChanged = level1Switch.update();
+  //if (l1s_stateChanged) {
+  l1s_state = level1Switch.read();
+  if (l1s_state == HIGH) {
+    waterLevel = AT_LEVEL;
+  }
+  if (l1s_state == LOW) {
+    waterLevel = BELOW_LEVEL;
+  }
+  du3 = true;
+  atoBlocked = false;
+  //}
 } // resetl1sBlocked
 
 
-void resetAtoBlocked(void* context)
+void enableMainProcess(void* context)
 // Allow ato process
 {
-  atoBlocked = false;
-} // resetAtoBlocked
+  inhibitMainProcess = false;
+  enableDisplay(0);
+} // enableMainProcess
 
 
 void setup()
@@ -538,13 +519,16 @@ void setup()
   // Display splash screen
   displayEnabled = true;
   updateDisplay(0);
+  // inhibit mainProcess for 3 seconds while splash screen is displayed
+  inhibitMainProcess = true;
 
   // Setup timer recurring events
   mainProcessEvent = t.every(250L, mainProcess, 0);  
   heartbeatEvent = t.every(500L, flashStatLED, 0);
 
   // Setup timer one shot events
-  enableDisplayEvent = t.after(6000L, enableDisplay, 0);
+  enableMainProcessEvent = t.after(3000L, enableMainProcess, 0);
+  //simulateFaultEvent = t.after(30000L, simulateFault, 0);
 } // setup
 
 
@@ -671,6 +655,13 @@ void serCommand()
 {
   Serial.write(0xFE);
 }
+
+
+
+
+
+
+
 
 
 

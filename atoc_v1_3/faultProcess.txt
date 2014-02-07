@@ -1,0 +1,77 @@
+void faultProcess(void)
+{
+  if (ftt_fault) { // yes, first time through
+    // Unconditionally turn off pump
+    atoPumpRelay.turnOff();
+
+#if DEBUG == 0 
+    // Send message to display
+    s1 = " ** FAULT **";
+    wd(&s1, 1);
+    if (freshWaterVol < pumpCycleVol) {
+      s2 = "Replenish water";
+      wd(&s2, 2); 
+      // Reset water vol
+      freshWaterVol = RESERVOIR_VOL;
+    } 
+    else {
+      s2 = "Bad level switch";
+      wd(&s2, 2);
+      // Reset pumpCycle 
+      curPumpCycle = 0;  
+    }
+#else 
+    Serial.println("In faultProcess.");
+#endif   
+    ftt_fault = false;
+    // Sound alarm repeatedly every 7 seconds, until stopped
+    alarm(0);
+    alarmEvent = t.every(7000L, alarm, 0);
+  }
+
+  // Fault recovery - recover when pump switch is pressed while in ATO mode
+  // Read mode switch
+  modeSwitch.update();
+  int value = modeSwitch.read();
+  // Is ATO mode selected?
+  if (value == HIGH) { // yes
+    // Read pump switch
+    bool changed = pumpSwitch.update();
+    value = pumpSwitch.read();
+    // Is pump switch on?
+    if ((changed) && (value == LOW)) { // yes
+      // Recovering...
+      mode = ATO;
+      ftt_fault = true;
+      // Turn off alarm
+      t.stop(alarmEvent);
+      // Assume fault has been corrected
+      // Was fault caused by low fresh water supply?
+      if (freshWaterVol < pumpCycleVol) { // yes
+# if DEBUG == 1
+        Serial.println(" - low fresh water volume.");
+#endif       
+        // Reset water vol
+        freshWaterVol = RESERVOIR_VOL;
+      } 
+      else { // no, fault was caused by bad level switch
+# if DEBUG == 1
+        Serial.println(" - bad level switch.");
+#endif      
+        // Reset curPumpCycle
+        curPumpCycle = 0;  
+      }
+# if DEBUG == 0
+      clearLCD();
+      s1 = " Fault cleared";
+      wd(&s1, 1);
+      mode = BLOCKED;
+      unblockModeEvent = t.after(2000L, unblockMode, 0);
+#else
+      Serial.println("Recovered from fault.");
+#endif      
+    }
+  }
+
+  return;
+} // faultProcess

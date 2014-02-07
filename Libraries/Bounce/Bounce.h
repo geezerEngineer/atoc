@@ -42,12 +42,15 @@ public:
   void attach(int pin);
 	// Sets the debounce interval
   void interval(unsigned long interval_millis); 
-	// Updates the pin
-	// Returns 1 if the state changed
-	// Returns 0 if the state did not change
+  // Updates the pin
+  // Returns 1 if the state changed
+  // Returns 0 if the state did not change
   bool update(); 
-	// Returns the updated pin state
+  // Returns the updated pin state
   uint8_t read();
+  // If true, signifies that object is not to be read because it may be unstable
+  // This attribute is not used by its object 
+  bool isBlocked;
 
   
 protected:

@@ -396,15 +396,6 @@ void readModeSwitch()
 } // readModeSwitch
 
 
-void readPumpSwitch()
-{
-  ps_stateChanged = pumpSwitch.update();
-  if ((ps_stateChanged) || (ftt_ps)) {
-    ps_state = pumpSwitch.read();
-  }
-} // readPumpSwitch
-
-
 void flashStatLED(void* context)
 // Flash status LED & show heartbeat on LCD, 2 Hz
 {
@@ -439,13 +430,13 @@ void resumeRegDisplay(void* context)
 
 void alarm1(void)
 {
-  t.pulseImmediate(alarm_pin, dot, HIGH);
+  t.pulseImmediate(alarm_pin, 100, HIGH);
 }
 
 
 void alarm2(void)
 {
-  t.oscillate(alarm_pin, dash, LOW, 3);
+  t.oscillate(alarm_pin, 300, LOW, 3);
 } // alarm2
 
 

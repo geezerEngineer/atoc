@@ -1,0 +1,38 @@
+void mainProcess(void* context)
+{
+  // Is mode blocked?
+  if (mode == BLOCKED) return; // yes
+  // no
+  // Has a fault occurred?
+  if (mode == FAULT) { // yes
+    faultProcess();
+    return;
+  } 
+  else // no, mode is not fault
+  {
+    atoProcess();
+    if (mode == FAULT) { // yes
+      faultProcess();
+      return;
+    } 
+    else { // no, mode is not fault
+      // read modeSwitch
+      bool changed = modeSwitch.update();
+      int value = modeSwitch.read();
+      if ((changed) && (value == LOW)) {
+        mode = DOSING;
+        s1 = "Mode: DOSING";
+        wd(&s1, 1);
+      }
+      if ((changed) && (value == HIGH)) {
+        mode = ATO;
+        s1 = "Mode: ATO";
+        wd(&s1, 1);
+        clrLine(2);
+      }
+      if (mode == DOSING) dosingProcess();
+      sumpLightProcess(); 
+      return;
+    }
+  } 
+} // mainProcess
