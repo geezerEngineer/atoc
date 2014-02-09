@@ -9,7 +9,7 @@
 #include <Ethernet.h>
 #include <UdpBytewise.h>  // UDP library from: bjoern@cs.stanford.edu 12/30/2008 
 #if  UDP_TX_PACKET_MAX_SIZE <64 ||  UDP_RX_PACKET_MAX_SIZE < 64
-#error : UDP packet size too small - modify UdpBytewise.h to set buffers to 64 bytes
+#error : UDP packet size to small - modify UdpBytewise.h to set buffers to 64 bytes
 #endif
 /*
  *
