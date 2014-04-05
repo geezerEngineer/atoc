@@ -1,13 +1,18 @@
 /* 
  * atoc_v1_3.ino
- * Mike Lussier - Jan 22, 2014
+ * Mike Lussier - Apr 5, 2014
  * Compiled with Arduino 1.0.5
+ * Binary sketch size: DEBUG 0 - 7,870 bytes, DEBUG 1 - 8,026 bytes
  *****************************
  */
 #define INO_NAME "ATOC"
-#define INO_VERSION "1.3.b"
+#define INO_VERSION "1.3.d"
 
-/* 
+/*
+ * .d - Disables calculation of fresh water supply to prevent triggering the error condition as the calculation
+ * is not reliable. Instead, the fresh water supply level needs to be measured continuously (somehow). 
+ * .c - Increases MAX_PUMP_RUN_CYCLES to 16 from 8. Reduces INFLOW_DISSIPATION_TIME to 2 seconds from 10. 
+ * Fixes syntax error in DEBUG 1 at line 241. 
  * .b - Delays starting of pump by 2 seconds when water level goes low.
  * .a - Revamps main and ato functions as per activity diagrams. Adds debug 
  * switch to write process messages to console.
@@ -16,12 +21,13 @@
  * relay switches, alarm and serial LCD (2*16).
  ***************************************** 
  */
- 
+
 #include <Relay.h>
 #include <Bounce.h>
 #include <Timer.h>
 
-#define DEBUG 0                     // 0 = debug off, 1 = debug to console
+// 0 = debug off, 1 = debug to console
+#define DEBUG 1
 
 static uint8_t alarm_pin            = 14;    // Piezo alarm (A0)
 static uint8_t levelSwitch_pin      = 8;     // Level switch (was D4, but 4 is not working)
@@ -32,13 +38,18 @@ static uint8_t dosPumpRelay_pin     = 6;     // Relay for dosing pump
 static uint8_t statLED_pin          = 13;    // Status LED
 
 // From ATO Calculations
-#define RESERVOIR_VOL 3500                // Volume, when full, of supply water reservoir, mL
-#define PUMP_RATE 5.0                     // Calibrated ato pump flow rate, mL/s
-#define VOL_CHANGE 618.1                  // Hysteresis volume change for nano float switch, mL
+// Volume, when full, of supply water reservoir, mL
+#define RESERVOIR_VOL 3500
+// Calibrated ato pump flow rate, mL/s
+#define PUMP_RATE 5.0
+// Hysteresis volume change for nano float switch, mL
+#define VOL_CHANGE 618.1
 // The level switch (float type) is affected by ripples caused by inflow of water from the ato 
 // pump. The switch is inhibited from being read until the ripples have dissipated. 
-#define INFLOW_DISSIPATION_TIME 10L       // Time required for inflow disturbance to subside, s
-#define MAX_PUMP_RUN_CYCLES 8             // Maximum no of pump run cycles before error, n
+// Time required for inflow disturbance to subside, s
+#define INFLOW_DISSIPATION_TIME 10L
+// Maximum no of pump run cycles before error, n
+#define MAX_PUMP_RUN_CYCLES 16
 
 // Instantiate debouncer objects for level 1 switch, mode & pump switches
 Bounce levelSwitch = Bounce();
@@ -189,7 +200,7 @@ void atoProcess(void)
       }
       // Is pump running?
       if (atoPumpRelay.getState() == HIGH) { // yes
-#if DEBUG == 1      
+#if DEBUG == 1
         Serial.println("Pump is running.");
 #endif        
         return;
@@ -209,7 +220,7 @@ void atoProcess(void)
             return;
           } 
           else { // no, there is no fault
-#if DEBUG == 1        
+#if DEBUG == 1
             Serial.println("No fault, so starting pump.");
 #endif
             atoPumpRelay.turnOn();
@@ -222,21 +233,21 @@ void atoProcess(void)
             Serial.print("  Remaining vol = ");
             Serial.print(freshWaterVol);
             Serial.println(" mL");
-#endif          
+#endif
             levelSwitch.isBlocked = true;
 #if DEBUG == 1
             Serial.println("Blocking level switch.");
 #endif
             stopPumpEvent = t.after(pumpCycleTime, stopPump, 0);
-            freshWaterVol -= pumpCycleVol;
+            // freshWaterVol -= pumpCycleVol; // ver 1.3.d disables this calculation
           }
           return;
         }
       }
     } 
     else { // no, waterLevel is not LOW
-#if DEBUG == 0
       if (changed) {
+#if DEBUG == 0
         s2 = " Water: OK";
         wd(&s2, 2);
         clrMessageEvent=t.after(4000L, clrMessage, (void*)2);    
@@ -312,7 +323,7 @@ void faultProcess(void)
     // Unconditionally turn off pump
     atoPumpRelay.turnOff();
 
-#if DEBUG == 0 
+#if DEBUG == 0
     // Send message to display
     s1 = " ** FAULT **";
     wd(&s1, 1);
@@ -328,9 +339,9 @@ void faultProcess(void)
       // Reset pumpCycle 
       curPumpCycle = 0;  
     }
-#else 
+#else
     Serial.println("In faultProcess.");
-#endif   
+#endif
     ftt_fault = false;
     // Sound alarm repeatedly every 7 seconds, until stopped
     alarm(0);
@@ -358,14 +369,14 @@ void faultProcess(void)
       if (freshWaterVol < pumpCycleVol) { // yes
 # if DEBUG == 1
         Serial.println(" - low fresh water volume.");
-#endif       
+#endif
         // Reset water vol
         freshWaterVol = RESERVOIR_VOL;
       } 
       else { // no, fault was caused by bad level switch
 # if DEBUG == 1
         Serial.println(" - bad level switch.");
-#endif      
+#endif
         // Reset curPumpCycle
         curPumpCycle = 0;  
       }
@@ -377,7 +388,7 @@ void faultProcess(void)
       unblockModeEvent = t.after(2000L, unblockMode, 0);
 #else
       Serial.println("Recovered from fault.");
-#endif      
+#endif
     }
   }
 
@@ -389,7 +400,7 @@ void faultProcess(void)
 void unblockMode(void* context)
 {
   mode = ATO;
-#if DEBUG == 0  
+#if DEBUG == 0
   s1 = "Mode: ATO";
   clrLine(2);
   wd(&s1, 1);
@@ -411,7 +422,7 @@ void stopPump(void* context)
   wd(&s2, 2);
 #else
   Serial.println("Turning off pump.");
-#endif  
+#endif
 } // stopPump
 
 
@@ -426,7 +437,7 @@ void unblockLevelSwitch(void* context)
   levelSwitch.isBlocked = false;
 #if DEBUG == 1
   Serial.println("Unblocking level switch.");
-#endif  
+#endif
 } // unblockLevelSwitch
 
 
@@ -472,13 +483,13 @@ void setup(void)
   wd(&s1,1);
   wd(&s2,2);
   unblockModeEvent = t.after(4000L, unblockMode, 0);
-#else  
+#else
   Serial.println();
   Serial.println();
   Serial.print("ATOC v");
   Serial.println(INO_VERSION);
   mode = ATO;
-#endif  
+#endif
 
   // Configure digital inputs
   // Mode switch
@@ -658,6 +669,7 @@ void serCommand()
 {
   Serial.write(0xFE);
 }
+
 
 
 
